@@ -1,118 +1,106 @@
 import pandas as pd
-import customtkinter as ctk
-from tkinter import filedialog, messagebox
-import threading
-import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import os
+import sys
+import subprocess
 
-class ComplianceApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
+def extract_non_compliant():
+    try:
+        # Select first file (all compliant)
+        file1 = filedialog.askopenfilename(
+            title="Select Excel File with ALL Compliant Businesses",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if not file1:
+            return
+        
+        # Select second file (mixed data)
+        file2 = filedialog.askopenfilename(
+            title="Select Excel File with Mixed Businesses",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if not file2:
+            return
 
-        # Window settings
-        self.title("📑 Business Compliance Checker")
-        self.geometry("600x450")
-        ctk.set_appearance_mode("light")   # "dark" or "light"
-        ctk.set_default_color_theme("blue")
+        # Show progress bar
+        progress["value"] = 20
+        root.update_idletasks()
 
-        # File paths
-        self.file1 = None
-        self.file2 = None
+        # Load files
+        df1 = pd.read_excel(file1)
+        df2 = pd.read_excel(file2)
 
-        # Title label
-        self.title_label = ctk.CTkLabel(self, text="Business Compliance Dashboard",
-                                        font=("Arial", 18, "bold"))
-        self.title_label.pack(pady=20)
+        progress["value"] = 50
+        root.update_idletasks()
 
-        # Buttons
-        self.btn_file1 = ctk.CTkButton(self, text="Select Compliant List (File 1)", command=self.load_file1)
-        self.btn_file1.pack(pady=10)
-
-        self.lbl_file1 = ctk.CTkLabel(self, text="No file selected", text_color="gray")
-        self.lbl_file1.pack()
-
-        self.btn_file2 = ctk.CTkButton(self, text="Select Mixed List (File 2)", command=self.load_file2)
-        self.btn_file2.pack(pady=10)
-
-        self.lbl_file2 = ctk.CTkLabel(self, text="No file selected", text_color="gray")
-        self.lbl_file2.pack()
-
-        # Run button
-        self.run_button = ctk.CTkButton(self, text="🔍 Extract Non-Compliant", fg_color="green",
-                                        hover_color="darkgreen", command=self.start_processing)
-        self.run_button.pack(pady=30)
-
-        # Progress bar
-        self.progress = ctk.CTkProgressBar(self, width=400)
-        self.progress.set(0)
-        self.progress.pack(pady=15)
-
-        self.progress_label = ctk.CTkLabel(self, text="")
-        self.progress_label.pack()
-
-    def load_file1(self):
-        path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
-        if path:
-            self.file1 = path
-            self.lbl_file1.configure(text=path, text_color="blue")
-
-    def load_file2(self):
-        path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
-        if path:
-            self.file2 = path
-            self.lbl_file2.configure(text=path, text_color="blue")
-
-    def start_processing(self):
-        """Run process in a separate thread so UI doesn’t freeze."""
-        thread = threading.Thread(target=self.process)
-        thread.start()
-
-    def process(self):
-        try:
-            if not self.file1 or not self.file2:
-                messagebox.showwarning("Missing File", "Please select both files before running.")
+        # Ensure columns exist
+        required_cols = ["BIN", "BUSINESS NAME", "BUSINESS LOCATION", "BARANGAY"]
+        for col in required_cols:
+            if col not in df2.columns:
+                messagebox.showerror("Error", f"Missing column in Data 2: {col}")
                 return
+        if "BIN" not in df1.columns:
+            messagebox.showerror("Error", "Missing column 'BIN' in Data 1")
+            return
 
-            # Start progress
-            self.progress_label.configure(text="⏳ Processing...")
-            self.progress.set(0)
+        # Extract compliant BINs
+        compliant_bins = set(df1["BIN"].astype(str))
 
-            # Simulate loading
-            for i in range(1, 4):  # Fake steps (reading, filtering, saving)
-                time.sleep(0.7)
-                self.progress.set(i / 3)
-                self.update_idletasks()
+        # Filter non-compliant records (BIN not in df1)
+        non_compliant = df2[~df2["BIN"].astype(str).isin(compliant_bins)].copy()
 
-            # Actual processing
-            df1 = pd.read_excel(self.file1)
-            df2 = pd.read_excel(self.file2)
+        # Select required columns
+        output = non_compliant[["BIN", "BUSINESS NAME", "BUSINESS LOCATION", "BARANGAY"]]
 
-            if "Business Name" not in df1.columns or "Business Name" not in df2.columns or "Status" not in df2.columns:
-                messagebox.showerror("Error", "Files must contain 'Business Name' and 'Status' columns.")
-                self.progress_label.configure(text="")
-                self.progress.set(0)
-                return
+        progress["value"] = 80
+        root.update_idletasks()
 
-            non_compliant = df2[df2["Status"].str.lower() == "non-compliant"]
-            result = non_compliant[~non_compliant["Business Name"].isin(df1["Business Name"])]
-
-            # Save file
-            output_file = filedialog.asksaveasfilename(defaultextension=".xlsx",
-                                                       filetypes=[("Excel files", "*.xlsx")])
-            if output_file:
-                result.to_excel(output_file, index=False)
-                self.progress.set(1)
-                self.progress_label.configure(text="✅ Done! File saved successfully.")
-                messagebox.showinfo("Success", f"Non-compliant businesses saved to:\n{output_file}")
+        # Save to new Excel with each Barangay in its own sheet
+        output_file = os.path.join(os.path.dirname(file2), "SAGOT SA PAGHIHIRAP NI MAICA AT JULIUS.xlsx")
+        with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+            if not output.empty:
+                for BARANGAY, group in output.groupby("BARANGAY"):
+                    if not group.empty:
+                        group.to_excel(writer, sheet_name=str(BARANGAY)[:31], index=False)
             else:
-                self.progress_label.configure(text="❌ Cancelled")
-                self.progress.set(0)
+                # Fallback if no data
+                pd.DataFrame([{"Message": "No Non-Compliant Businesses Found"}]) \
+                    .to_excel(writer, sheet_name="Summary", index=False)
 
-        except Exception as e:
-            messagebox.showerror("Unexpected Error", str(e))
-            self.progress_label.configure(text="❌ Failed")
-            self.progress.set(0)
+        progress["value"] = 100
+        root.update_idletasks()
+
+        # Auto open the file
+        if sys.platform == "win32":  # Windows
+            os.startfile(output_file)
+        elif sys.platform == "darwin":  # macOS
+            subprocess.call(["open", output_file])
+        else:  # Linux
+            subprocess.call(["xdg-open", output_file])
+
+        messagebox.showinfo(
+            "Success",
+            f"Non-compliant businesses extracted!\n\nSaved as:\n{output_file}"
+        )
+
+    except Exception as e:
+        messagebox.showerror("NAKU PO!!!! MALI!!!!!!!!", str(e))
 
 
-if __name__ == "__main__":
-    app = ComplianceApp()
-    app.mainloop()
+# GUI
+root = tk.Tk()
+root.title("PERMITTING MALUPIT")
+root.geometry("450x220")
+
+label = tk.Label(root, text="GAWA NI NONOY", font=("Arial", 14))
+label.pack(pady=10)
+
+button = tk.Button(root, text="Start Extraction", command=extract_non_compliant,
+                   font=("Arial", 12), bg="lightblue")
+button.pack(pady=10)
+
+progress = ttk.Progressbar(root, orient="horizontal", length=300, mode="determinate")
+progress.pack(pady=20)
+
+root.mainloop()

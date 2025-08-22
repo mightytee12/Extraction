@@ -1,5 +1,7 @@
 venv/ 
 build/
+
+search_app.spec
 extract_non_compliant.spec
 extract_non_compliant.exe
 extract_non_compliant.zip
